@@ -19,10 +19,13 @@ type DiffViewerConfig struct {
 	MaxLines int
 }
 
-var config = DiffViewerConfig{}
+func (d *DiffViewerConfig) ShouldTruncateOutput(totalLines int) bool {
+	return !d.ShowFull && totalLines > d.MaxLines
+}
 
 func main() {
 
+	var config = DiffViewerConfig{}
 	flag.BoolVar(&config.ShowDiff, "diff", false, "Show different lines instead of common lines")
 	flag.BoolVar(&config.ShowDiff, "d", false, "Show different lines instead of common lines (shorthand)")
 	flag.BoolVar(&config.ShowFull, "full", false, "Show full output without truncation")
@@ -117,21 +120,15 @@ func showCommonLines(files []FileData, config DiffViewerConfig) {
 			fmt.Printf("  %s,\n", file.Path)
 		}
 	}
-	fmt.Printf("\nFound %d common lines", len(commonLines))
+	fmt.Printf("\nFound %d common lines:", len(commonLines))
 
-	displayLines := commonLines
-	if !config.ShowFull && len(commonLines) > config.MaxLines {
-		displayLines = commonLines[:config.MaxLines]
-		fmt.Printf(" (showing first %d):\n\n", config.MaxLines)
-	} else {
-		fmt.Printf(":\n\n")
-	}
+	displayLines := prepareLinesForDisplay(commonLines, config)
 
 	for _, line := range displayLines {
 		fmt.Println(line)
 	}
 
-	if !config.ShowFull && len(commonLines) > config.MaxLines {
+	if config.ShouldTruncateOutput(len(commonLines)) {
 		remaining := len(commonLines) - config.MaxLines
 		fmt.Printf("\n... and %d more lines (use -full or -f to see all)\n", remaining)
 	}
@@ -149,71 +146,69 @@ func showDifferentLines(files []FileData, config DiffViewerConfig) {
 	}
 	fmt.Printf("Lines unique to each file (total: %d unique lines):\n\n", totalUnique)
 
-	for i, file := range files {
-		if len(uniqueLines[i]) > 0 {
-			newFunction(file, uniqueLines, i, config.ShowFull, config.MaxLines)
-		} else {
-			fmt.Printf("No unique lines in %s\n\n", file.Path)
-		}
-	}
+	displayUniqueLinesForFiles(files, uniqueLines, config)
 
 	// Also show lines that are shared by some but not all files
-	if len(files) > 2 {
-		partiallyShared := findPartiallySharedLines(files)
-		if len(partiallyShared) > 0 {
-			fmt.Printf("Lines shared by some files (but not all):\n")
-
-			// Convert to slice for easier handling
-			var partialLines []string
-			for line := range partiallyShared {
-				partialLines = append(partialLines, line)
-			}
-			sort.Strings(partialLines)
-
-			displayPartialLines := partialLines
-			if !config.ShowFull && len(partialLines) > config.MaxLines {
-				displayPartialLines = partialLines[:config.MaxLines]
-				fmt.Printf("(showing first %d of %d):\n", config.MaxLines, len(partialLines))
-			}
-
-			for _, line := range displayPartialLines {
-				fileIndices := partiallyShared[line]
-				fmt.Printf("  \"%s\" appears in:", line)
-				for _, idx := range fileIndices {
-					fmt.Printf(" %s", files[idx].Path)
-				}
-				fmt.Println()
-			}
-
-			if !config.ShowFull && len(partialLines) > config.MaxLines {
-				remaining := len(partialLines) - config.MaxLines
-				fmt.Printf("  ... and %d more partially shared lines\n", remaining)
-			}
-		}
-	}
+	displaySharedLines(files, config)
 
 	if !config.ShowFull && (totalUnique > config.MaxLines*len(files) || (len(files) > 2 && len(findPartiallySharedLines(files)) > config.MaxLines)) {
 		fmt.Printf("\nUse -full or -f to see all results, or -limit N to show more lines per section\n")
 	}
 }
 
-func newFunction(file FileData, uniqueLines [][]string, i int, showFull bool, maxLines int) {
-	fmt.Printf("Lines only in %s (%d lines", file.Path, len(uniqueLines[i]))
-
-	displayLines := uniqueLines[i]
-	if !showFull && len(uniqueLines[i]) > maxLines {
-		displayLines = uniqueLines[i][:maxLines]
-		fmt.Printf(", showing first %d):\n", maxLines)
-	} else {
-		fmt.Printf("):\n")
+func displaySharedLines(files []FileData, config DiffViewerConfig) {
+	if len(files) < 2 {
+		return
 	}
+	partiallyShared := findPartiallySharedLines(files)
+	if len(partiallyShared) > 0 {
+		fmt.Printf("Lines shared by some files (but not all):\n")
 
+		// Convert to slice for easier handling
+		var partialLines []string
+		for line := range partiallyShared {
+			partialLines = append(partialLines, line)
+		}
+		sort.Strings(partialLines)
+
+		displayPartialLines := prepareLinesForDisplay(partialLines, config)
+
+		for _, line := range displayPartialLines {
+			fileIndices := partiallyShared[line]
+			fmt.Printf("  \"%s\" appears in:", line)
+			for _, idx := range fileIndices {
+				fmt.Printf(" %s", files[idx].Path)
+			}
+			fmt.Println()
+		}
+
+		if config.ShouldTruncateOutput(len(partialLines)) {
+			remaining := len(partialLines) - config.MaxLines
+			fmt.Printf("  ... and %d more partially shared lines\n", remaining)
+		}
+	}
+}
+
+func displayUniqueLinesForFiles(files []FileData, uniqueLines [][]string, config DiffViewerConfig) {
+	for i, file := range files {
+		if len(uniqueLines[i]) > 0 {
+			displayUniqueLinesForFile(file, uniqueLines, i, config)
+		} else {
+			fmt.Printf("No unique lines in %s\n\n", file.Path)
+		}
+	}
+}
+
+func displayUniqueLinesForFile(file FileData, uniqueLines [][]string, i int, config DiffViewerConfig) {
+	fmt.Printf("Lines only in %s:", file.Path)
+
+	displayLines := prepareLinesForDisplay(uniqueLines[i], config)
 	for _, line := range displayLines {
 		fmt.Printf("  %s\n", line)
 	}
 
-	if !showFull && len(uniqueLines[i]) > maxLines {
-		remaining := len(uniqueLines[i]) - maxLines
+	if config.ShouldTruncateOutput(len(uniqueLines[i])) {
+		remaining := len(uniqueLines[i]) - config.MaxLines
 		fmt.Printf("  ... and %d more lines\n", remaining)
 	}
 	fmt.Println()
@@ -306,4 +301,14 @@ func findPartiallySharedLines(files []FileData) map[string][]int {
 	}
 
 	return result
+}
+
+func prepareLinesForDisplay(lines []string, config DiffViewerConfig) []string {
+	displayLines := lines
+	if config.ShouldTruncateOutput(len(lines)) {
+		displayLines = lines[:config.MaxLines]
+		fmt.Printf("(showing first %d of %d):\n", config.MaxLines, len(lines))
+	}
+	fmt.Println()
+	return displayLines
 }
