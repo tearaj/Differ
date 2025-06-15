@@ -13,17 +13,20 @@ type FileData struct {
 	Lines map[string]bool
 }
 
+type DiffViewerConfig struct {
+	ShowDiff  bool
+	ShowFull  bool
+	MaxLines  int
+}
+var config = DiffViewerConfig{}
 func main() {
-	var showDiff bool
-	var showFull bool
-	var maxLines int
 	
-	flag.BoolVar(&showDiff, "diff", false, "Show different lines instead of common lines")
-	flag.BoolVar(&showDiff, "d", false, "Show different lines instead of common lines (shorthand)")
-	flag.BoolVar(&showFull, "full", false, "Show full output without truncation")
-	flag.BoolVar(&showFull, "f", false, "Show full output without truncation (shorthand)")
-	flag.IntVar(&maxLines, "limit", 20, "Maximum number of lines to show per section (use with -full to override)")
-	flag.IntVar(&maxLines, "l", 20, "Maximum number of lines to show per section (shorthand)")
+	flag.BoolVar(&config.ShowDiff, "diff", false, "Show different lines instead of common lines")
+	flag.BoolVar(&config.ShowDiff, "d", false, "Show different lines instead of common lines (shorthand)")
+	flag.BoolVar(&config.ShowFull, "full", false, "Show full output without truncation")
+	flag.BoolVar(&config.ShowFull, "f", false, "Show full output without truncation (shorthand)")
+	flag.IntVar(&config.MaxLines, "limit", 20, "Maximum number of lines to show per section (use with -full to override)")
+	flag.IntVar(&config.MaxLines, "l", 20, "Maximum number of lines to show per section (shorthand)")
 	
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <file1> <file2> [file3] [file4] ...\n", os.Args[0])
@@ -69,10 +72,10 @@ func main() {
 		})
 	}
 
-	if showDiff {
-		showDifferentLines(files, showFull, maxLines)
+	if config.ShowDiff {
+		showDifferentLines(files, config)
 	} else {
-		showCommonLines(files, showFull, maxLines)
+		showCommonLines(files, config)
 	}
 }
 
@@ -96,7 +99,7 @@ func readLines(filename string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
-func showCommonLines(files []FileData, showFull bool, maxLines int) {
+func showCommonLines(files []FileData, config DiffViewerConfig) {
 	commonLines := findCommonLines(files)
 	
 	if len(commonLines) == 0 {
@@ -115,9 +118,9 @@ func showCommonLines(files []FileData, showFull bool, maxLines int) {
 	fmt.Printf("\nFound %d common lines", len(commonLines))
 	
 	displayLines := commonLines
-	if !showFull && len(commonLines) > maxLines {
-		displayLines = commonLines[:maxLines]
-		fmt.Printf(" (showing first %d):\n\n", maxLines)
+	if !config.ShowFull && len(commonLines) > config.MaxLines {
+		displayLines = commonLines[:config.MaxLines]
+		fmt.Printf(" (showing first %d):\n\n", config.MaxLines)
 	} else {
 		fmt.Printf(":\n\n")
 	}
@@ -126,48 +129,27 @@ func showCommonLines(files []FileData, showFull bool, maxLines int) {
 		fmt.Println(line)
 	}
 	
-	if !showFull && len(commonLines) > maxLines {
-		remaining := len(commonLines) - maxLines
+	if !config.ShowFull && len(commonLines) > config.MaxLines {
+		remaining := len(commonLines) - config.MaxLines
 		fmt.Printf("\n... and %d more lines (use -full or -f to see all)\n", remaining)
 	}
 }
 
-func showDifferentLines(files []FileData, showFull bool, maxLines int) {
+func showDifferentLines(files []FileData, config DiffViewerConfig) {
+	
 	uniqueLines := findUniqueLines(files)
 	
-	totalUnique := 0
-	for _, lines := range uniqueLines {
-		totalUnique += len(lines)
-	}
+	totalUnique := countLines(uniqueLines)
 	
 	if totalUnique == 0 {
 		fmt.Printf("No unique lines found - all files have identical content\n")
 		return
 	}
-
 	fmt.Printf("Lines unique to each file (total: %d unique lines):\n\n", totalUnique)
 	
 	for i, file := range files {
 		if len(uniqueLines[i]) > 0 {
-			fmt.Printf("Lines only in %s (%d lines", file.Path, len(uniqueLines[i]))
-			
-			displayLines := uniqueLines[i]
-			if !showFull && len(uniqueLines[i]) > maxLines {
-				displayLines = uniqueLines[i][:maxLines]
-				fmt.Printf(", showing first %d):\n", maxLines)
-			} else {
-				fmt.Printf("):\n")
-			}
-			
-			for _, line := range displayLines {
-				fmt.Printf("  %s\n", line)
-			}
-			
-			if !showFull && len(uniqueLines[i]) > maxLines {
-				remaining := len(uniqueLines[i]) - maxLines
-				fmt.Printf("  ... and %d more lines\n", remaining)
-			}
-			fmt.Println()
+			newFunction(file, uniqueLines, i, config.ShowFull, config.MaxLines)
 		} else {
 			fmt.Printf("No unique lines in %s\n\n", file.Path)
 		}
@@ -187,9 +169,9 @@ func showDifferentLines(files []FileData, showFull bool, maxLines int) {
 			sort.Strings(partialLines)
 			
 			displayPartialLines := partialLines
-			if !showFull && len(partialLines) > maxLines {
-				displayPartialLines = partialLines[:maxLines]
-				fmt.Printf("(showing first %d of %d):\n", maxLines, len(partialLines))
+			if !config.ShowFull && len(partialLines) > config.MaxLines {
+				displayPartialLines = partialLines[:config.MaxLines]
+				fmt.Printf("(showing first %d of %d):\n", config.MaxLines, len(partialLines))
 			}
 			
 			for _, line := range displayPartialLines {
@@ -201,16 +183,46 @@ func showDifferentLines(files []FileData, showFull bool, maxLines int) {
 				fmt.Println()
 			}
 			
-			if !showFull && len(partialLines) > maxLines {
-				remaining := len(partialLines) - maxLines
+			if !config.ShowFull && len(partialLines) > config.MaxLines {
+				remaining := len(partialLines) - config.MaxLines
 				fmt.Printf("  ... and %d more partially shared lines\n", remaining)
 			}
 		}
 	}
 	
-	if !showFull && (totalUnique > maxLines*len(files) || (len(files) > 2 && len(findPartiallySharedLines(files)) > maxLines)) {
+	if !config.ShowFull && (totalUnique > config.MaxLines*len(files) || (len(files) > 2 && len(findPartiallySharedLines(files)) > config.MaxLines)) {
 		fmt.Printf("\nUse -full or -f to see all results, or -limit N to show more lines per section\n")
 	}
+}
+
+func newFunction(file FileData, uniqueLines [][]string, i int, showFull bool, maxLines int) {
+	fmt.Printf("Lines only in %s (%d lines", file.Path, len(uniqueLines[i]))
+
+	displayLines := uniqueLines[i]
+	if !showFull && len(uniqueLines[i]) > maxLines {
+		displayLines = uniqueLines[i][:maxLines]
+		fmt.Printf(", showing first %d):\n", maxLines)
+	} else {
+		fmt.Printf("):\n")
+	}
+
+	for _, line := range displayLines {
+		fmt.Printf("  %s\n", line)
+	}
+
+	if !showFull && len(uniqueLines[i]) > maxLines {
+		remaining := len(uniqueLines[i]) - maxLines
+		fmt.Printf("  ... and %d more lines\n", remaining)
+	}
+	fmt.Println()
+}
+
+func countLines(uniqueLines [][]string) int {
+	totalUnique := 0
+	for _, lines := range uniqueLines {
+		totalUnique += len(lines)
+	}
+	return totalUnique
 }
 
 func findCommonLines(files []FileData) []string {
